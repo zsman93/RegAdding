@@ -1,0 +1,92 @@
+do {
+# Read input for the user ID
+$username = Read-Host "Please enter the user ID"
+$userid = Invoke-Sqlcmd -ServerInstance "Server Name" -Database "databasename" -Query "SELECT top 1 [NodeGroupId],[nodegroupname] from database.dbo.NodeGroupDefinitions where NodeGroupName like '$username'"  | ForEach-Object { "$($_.NodeGroupId)" }
+$usernameint = [int]$userid
+   # Check the user input
+    if ($usernameint -gt 0) {
+        Write-Host "User exists."
+        # Read input from the user for registration patterns
+        $reg = Read-Host "Please enter the vehicle registration patterns"
+
+        $regremove = $reg -replace ' ', ''
+        $regremove1 = $regremove -replace ',', ''
+
+        # Insert commas after every 7 characters
+        $regfinal = $regremove1 -split '(.......)' -ne '' -join ','
+
+
+
+# Split the registration patterns and the WHERE clause
+$reglist = $regfinal -split ',' | ForEach-Object { "'%" + $_.Trim() + "%'" }
+$uniqueList1 = $regfinal -split ','| ForEach-Object { $_.Toupper() } | Select-Object -Unique
+$uniqueList = $reglist | Select-Object -Unique
+$regclause = $uniquelist -join " OR vehicle_reg LIKE "
+
+$query = 
+@"
+SELECT nodeid,vehicle_reg,NodeGroupid
+
+FROM [dbo].[vehicle_list]
+ 
+where NodeGroupid = 1 and (vehicle_reg LIKE $regclause)
+ORDER BY NodeGroupid
+OFFSET 0 ROWS
+Fetch next 1000 ROWS only; 
+"@
+
+$svrname = "Server Name"
+$databasename = "database"
+
+# Execute the query to get the nodeids
+$nodeIdList = Invoke-Sqlcmd -ServerInstance $svrname -Database $databasename -Query $query | ForEach-Object { $_.nodeid }
+$nodeIdListdup = Invoke-Sqlcmd -ServerInstance $svrname -Database $databasename -Query $query | Select-Object -ExpandProperty vehicle_reg
+$nodeIdReg = Invoke-Sqlcmd -ServerInstance $svrname -Database $databasename -Query $query | ForEach-Object { $_.vehicle_reg }
+$nodeIdRegdup = Invoke-Sqlcmd -ServerInstance $svrname -Database $databasename -Query $query | ForEach-Object { $_.vehicle_reg }
+
+# Finding duplicates
+$duplicates = $nodeIdListdup | Group-Object | Where-Object { $_.Count -gt 1 } | Select-Object -ExpandProperty Name
+Write-host "Note: the below registrations are duplicates:" -ForegroundColor Yellow
+$duplicates
+
+$array1 = $uniqueList1
+$array2 = $nodeidreg
+
+# Compare the contents of the two arrays
+$differences = Compare-Object -ReferenceObject $array1 -DifferenceObject $array2
+
+# Display only the differences from the first variable
+$regdifferences = $differences | Where-Object { $_.SideIndicator -eq '<=' }
+
+
+
+if ($regdifferences) {
+    Write-Host "Note: the below registrations do not exist:" -ForegroundColor yellow
+    $regdifferences | ForEach-Object { Write-Host "`t$($_.InputObject)" }
+} else {
+    Write-Host "All registrations exist." -ForegroundColor Green
+    
+}
+
+
+foreach ($node in $nodeIdList) {
+  #Adds the registration details to the database
+  $spquery = "EXEC sp_addgroupmember @nodegroupid=$userid, @nodeid=$node, @SurpressReturnTable=default"
+  Invoke-Sqlcmd -ServerInstance "servername" -Database "database name" -Query $spQuery
+  Write-Host $spquery
+    
+}
+
+        
+        
+        break 
+    }
+    
+    elseif($usernameint -le 0){
+        Write-Host "Does not exist." -ForegroundColor red
+       
+        
+    }
+   
+} while ($true)
+Read-Host -Prompt "Press any key to exit"
